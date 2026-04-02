@@ -1,4 +1,4 @@
-package main
+package twitter
 
 import (
 	"encoding/json"
@@ -23,9 +23,9 @@ type Tweet struct {
 	Engagement   int // Likes + Retweets (computed)
 }
 
-// --- X GraphQL API response types ---
+// --- GraphQL API response types ---
 
-type TimelineResponse struct {
+type timelineResponse struct {
 	Data struct {
 		Home struct {
 			HomeTimelineUrt struct {
@@ -35,22 +35,18 @@ type TimelineResponse struct {
 	} `json:"data"`
 }
 
-type UserByScreenNameResponse struct {
+type userByScreenNameResponse struct {
 	Data struct {
 		User struct {
 			Result struct {
 				Typename string `json:"__typename"`
 				RestID   string `json:"rest_id"`
-				Legacy   struct {
-					Name       string `json:"name"`
-					ScreenName string `json:"screen_name"`
-				} `json:"legacy"`
 			} `json:"result"`
 		} `json:"user"`
 	} `json:"data"`
 }
 
-type UserTweetsResponse struct {
+type userTweetsResponse struct {
 	Data struct {
 		User struct {
 			Result struct {
@@ -64,49 +60,55 @@ type UserTweetsResponse struct {
 	} `json:"data"`
 }
 
-type Instruction struct {
+type bookmarksResponse struct {
+	Data struct {
+		BookmarkTimeline struct {
+			Timeline struct {
+				Instructions []json.RawMessage `json:"instructions"`
+			} `json:"timeline"`
+		} `json:"bookmark_timeline_v2"`
+	} `json:"data"`
+}
+
+type instruction struct {
 	Type string `json:"type"`
 }
 
-type AddEntriesInstruction struct {
+type addEntriesInstruction struct {
 	Type    string          `json:"type"`
-	Entries []TimelineEntry `json:"entries"`
+	Entries []timelineEntry `json:"entries"`
 }
 
-type TimelineEntry struct {
+type timelineEntry struct {
 	EntryID   string          `json:"entryId"`
 	SortIndex string          `json:"sortIndex"`
 	Content   json.RawMessage `json:"content"`
 }
 
-type TypedContent struct {
-	Typename string `json:"__typename"`
-}
-
-type TimelineItemContent struct {
+type timelineItemContent struct {
 	Typename    string       `json:"__typename"`
-	ItemContent TweetContent `json:"itemContent"`
+	ItemContent tweetContent `json:"itemContent"`
 }
 
-type TimelineModuleContent struct {
+type timelineModuleContent struct {
 	Typename string `json:"__typename"`
 	Items    []struct {
 		Item struct {
-			ItemContent TweetContent `json:"itemContent"`
+			ItemContent tweetContent `json:"itemContent"`
 		} `json:"item"`
 	} `json:"items"`
 }
 
-type TweetContent struct {
+type tweetContent struct {
 	Typename     string `json:"__typename"`
 	TweetResults struct {
 		Result json.RawMessage `json:"result"`
 	} `json:"tweet_results"`
 }
 
-type TweetResult struct {
+type tweetResult struct {
 	Typename string `json:"__typename"`
-	Core struct {
+	Core     struct {
 		UserResults struct {
 			Result struct {
 				Legacy struct {
@@ -124,11 +126,11 @@ type TweetResult struct {
 	Views struct {
 		Count string `json:"count"`
 	} `json:"views"`
-	Legacy TweetLegacy     `json:"legacy"`
-	Tweet  json.RawMessage `json:"tweet,omitempty"` // For TweetWithVisibilityResults
+	Legacy tweetLegacy     `json:"legacy"`
+	Tweet  json.RawMessage `json:"tweet,omitempty"`
 }
 
-type TweetLegacy struct {
+type tweetLegacy struct {
 	IDStr         string `json:"id_str"`
 	FullText      string `json:"full_text"`
 	CreatedAt     string `json:"created_at"`

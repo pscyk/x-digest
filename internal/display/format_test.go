@@ -1,4 +1,4 @@
-package main
+package display
 
 import (
 	"testing"
@@ -22,9 +22,9 @@ func TestFormatNumber(t *testing.T) {
 		{123456789, "123.5M"},
 	}
 	for _, tt := range tests {
-		got := formatNumber(tt.input)
+		got := FormatNumber(tt.input)
 		if got != tt.expected {
-			t.Errorf("formatNumber(%d) = %q, want %q", tt.input, got, tt.expected)
+			t.Errorf("FormatNumber(%d) = %q, want %q", tt.input, got, tt.expected)
 		}
 	}
 }
@@ -69,9 +69,9 @@ func TestWordWrap(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := wordWrap(tt.input, tt.width)
+			got := WordWrap(tt.input, tt.width)
 			if len(got) != len(tt.expected) {
-				t.Fatalf("wordWrap(%q, %d) returned %d lines, want %d\ngot:  %v\nwant: %v",
+				t.Fatalf("WordWrap(%q, %d) returned %d lines, want %d\ngot:  %v\nwant: %v",
 					tt.input, tt.width, len(got), len(tt.expected), got, tt.expected)
 			}
 			for i := range got {
@@ -84,10 +84,9 @@ func TestWordWrap(t *testing.T) {
 }
 
 func TestRelativeTime_Zero(t *testing.T) {
-	// Zero time should produce empty string.
-	got := relativeTime(time.Time{})
+	got := RelativeTime(time.Time{})
 	if got != "" {
-		t.Errorf("relativeTime(zero) = %q, want empty", got)
+		t.Errorf("RelativeTime(zero) = %q, want empty", got)
 	}
 }
 
@@ -98,14 +97,12 @@ func FuzzWordWrap(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		lines := wordWrap(input, 40)
+		lines := WordWrap(input, 40)
 
-		// Property 1: never exceeds maxTextLines.
-		if len(lines) > maxTextLines {
-			t.Errorf("wordWrap returned %d lines, max is %d", len(lines), maxTextLines)
+		if len(lines) > MaxTextLines {
+			t.Errorf("WordWrap returned %d lines, max is %d", len(lines), MaxTextLines)
 		}
 
-		// Property 2: no line is empty (after wrap).
 		for i, line := range lines {
 			if line == "" {
 				t.Errorf("line %d is empty", i)

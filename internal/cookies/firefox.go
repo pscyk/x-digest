@@ -1,4 +1,4 @@
-package main
+package cookies
 
 import (
 	"bufio"
@@ -19,15 +19,15 @@ const (
 		  AND name IN ('auth_token', 'ct0')
 		  AND originAttributes = ''
 	`
-	// WAL files needed for consistent reads while Firefox is running.
 	dbFile  = "cookies.sqlite"
 	walFile = "cookies.sqlite-wal"
 	shmFile = "cookies.sqlite-shm"
 )
 
-// extractCookies reads auth_token and ct0 from Firefox's cookie store.
-func extractCookies(profileOverride string) (authToken, ct0 string, err error) {
-	profileDir, err := findFirefoxProfile(profileOverride)
+// ExtractFirefox reads auth_token and ct0 from Firefox's cookie store.
+// profileOverride selects a specific Firefox profile name; empty uses the default.
+func ExtractFirefox(profileOverride string) (authToken, ct0 string, err error) {
+	profileDir, err := findProfile(profileOverride)
 	if err != nil {
 		return "", "", err
 	}
@@ -87,14 +87,10 @@ func extractCookies(profileOverride string) (authToken, ct0 string, err error) {
 		return "", "", fmt.Errorf("ct0 cookie not found — log into x.com in Firefox first")
 	}
 
-	assert(len(authToken) > 0, "authToken validated but empty")
-	assert(len(ct0) > 0, "ct0 validated but empty")
-
 	return authToken, ct0, nil
 }
 
-// findFirefoxProfile locates the default Firefox profile directory.
-func findFirefoxProfile(override string) (string, error) {
+func findProfile(override string) (string, error) {
 	appData := os.Getenv("APPDATA")
 	if appData == "" {
 		return "", fmt.Errorf("APPDATA environment variable not set")
@@ -109,7 +105,6 @@ func findFirefoxProfile(override string) (string, error) {
 		return "", fmt.Errorf("profile %q not found in %s", override, filepath.Join(firefoxDir, "Profiles"))
 	}
 
-	// Parse profiles.ini to find the active profile.
 	iniPath := filepath.Join(firefoxDir, "profiles.ini")
 	if profilePath, err := parseProfilesINI(iniPath); err == nil && profilePath != "" {
 		if filepath.IsAbs(profilePath) {
@@ -118,7 +113,6 @@ func findFirefoxProfile(override string) (string, error) {
 		return filepath.Join(firefoxDir, profilePath), nil
 	}
 
-	// Fallback: glob for common default profile names.
 	for _, pattern := range []string{"*.default-release", "*.default"} {
 		matches, _ := filepath.Glob(filepath.Join(firefoxDir, "Profiles", pattern))
 		if len(matches) > 0 {
@@ -129,7 +123,6 @@ func findFirefoxProfile(override string) (string, error) {
 	return "", fmt.Errorf("no Firefox profile found in %s", firefoxDir)
 }
 
-// parseProfilesINI reads the Default= path from the [Install*] section.
 func parseProfilesINI(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {

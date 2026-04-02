@@ -1,6 +1,6 @@
 # Binary
-x-digest.exe
-x-digest
+/x-digest.exe
+/x-digest
 
 # Test/bench artifacts
 bench.txt

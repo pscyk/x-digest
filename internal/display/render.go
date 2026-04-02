@@ -1,4 +1,4 @@
-package main
+package display
 
 import (
 	"fmt"
@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"x-digest/internal/twitter"
 )
 
 var (
@@ -42,12 +44,10 @@ var (
 	mediaStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#E0A458"))
 )
 
-const (
-	cardInnerWidth = 58
-	maxTextLines   = 5
-)
+const cardInnerWidth = 58
 
-func displayTweets(tweets []Tweet, count int) {
+// Tweets sorts by engagement and prints the top count tweets.
+func Tweets(tweets []twitter.Tweet, count int) {
 	if len(tweets) == 0 {
 		fmt.Println(lipgloss.NewStyle().Foreground(dimColor).Render("No tweets found."))
 		return
@@ -75,13 +75,13 @@ func displayTweets(tweets []Tweet, count int) {
 	}
 }
 
-func printTweet(rank int, t Tweet) {
+func printTweet(rank int, t twitter.Tweet) {
 	verified := ""
 	if t.IsVerified {
 		verified = verifiedStyle.Render(" ✓")
 	}
 
-	ago := timeStyle.Render(relativeTime(t.Timestamp))
+	ago := timeStyle.Render(RelativeTime(t.Timestamp))
 	handle := handleStyle.Render("@" + t.AuthorHandle)
 	name := nameStyle.Render(" " + t.AuthorName)
 	r := rankStyle.Render(fmt.Sprintf("#%d", rank))
@@ -93,7 +93,7 @@ func printTweet(rank int, t Tweet) {
 	}
 	topLine += strings.Repeat(" ", padLen) + ago
 
-	lines := wordWrap(t.Text, cardInnerWidth)
+	lines := WordWrap(t.Text, cardInnerWidth)
 	body := tweetStyle.Render(strings.Join(lines, "\n"))
 
 	stats := buildStats(t)
@@ -101,16 +101,15 @@ func printTweet(rank int, t Tweet) {
 	fmt.Println(cardStyle.Render(topLine + "\n" + body + "\n" + stats))
 }
 
-func buildStats(t Tweet) string {
-	// Pre-allocate: at most 5 stat parts (likes, RTs, replies, views, media).
+func buildStats(t twitter.Tweet) string {
 	parts := make([]string, 0, 5)
 	parts = append(parts,
-		likeStyle.Render(fmt.Sprintf("♥ %s", formatNumber(t.Likes))),
-		rtStyle.Render(fmt.Sprintf("↻ %s", formatNumber(t.Retweets))),
-		replyStyle.Render(fmt.Sprintf("💬 %s", formatNumber(t.Replies))),
+		likeStyle.Render(fmt.Sprintf("♥ %s", FormatNumber(t.Likes))),
+		rtStyle.Render(fmt.Sprintf("↻ %s", FormatNumber(t.Retweets))),
+		replyStyle.Render(fmt.Sprintf("💬 %s", FormatNumber(t.Replies))),
 	)
 	if t.Views > 0 {
-		parts = append(parts, viewStyle.Render(fmt.Sprintf("👁 %s", formatNumber(t.Views))))
+		parts = append(parts, viewStyle.Render(fmt.Sprintf("👁 %s", FormatNumber(t.Views))))
 	}
 	if t.HasMedia {
 		icon := "📷"
@@ -123,73 +122,4 @@ func buildStats(t Tweet) string {
 		parts = append(parts, mediaStyle.Render(icon))
 	}
 	return strings.Join(parts, "   ")
-}
-
-// wordWrap splits text into lines of at most width characters, capped at maxTextLines.
-func wordWrap(text string, width int) []string {
-	assert(width > 0, "wordWrap width must be positive")
-
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	paragraphs := strings.Split(text, "\n")
-	// Estimate: most tweets fit in 4-6 lines.
-	lines := make([]string, 0, 8)
-
-	for _, para := range paragraphs {
-		para = strings.TrimSpace(para)
-		if para == "" {
-			continue
-		}
-		words := strings.Fields(para)
-		if len(words) == 0 {
-			continue
-		}
-		current := words[0]
-		for _, w := range words[1:] {
-			if len(current)+1+len(w) > width {
-				lines = append(lines, current)
-				current = w
-			} else {
-				current += " " + w
-			}
-		}
-		lines = append(lines, current)
-	}
-
-	if len(lines) > maxTextLines {
-		lines = lines[:maxTextLines]
-		lines[maxTextLines-1] += "…"
-	}
-	return lines
-}
-
-func relativeTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	default:
-		days := int(d.Hours() / 24)
-		if days == 1 {
-			return "1d"
-		}
-		return fmt.Sprintf("%dd", days)
-	}
-}
-
-func formatNumber(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fK", float64(n)/1_000)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
 }

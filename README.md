@@ -11,10 +11,23 @@ CLI tool that reads your X (Twitter) feed and shows you the highlights — sorte
 
 Your cookies never leave your machine. The only network calls go to `x.com`.
 
+## Project structure
+
+```
+x-digest/
+  cmd/x-digest/          # entry point — flag parsing, wiring
+  internal/
+    twitter/             # API client, response parsing, types
+    cookies/             # Firefox cookie extraction
+    display/             # lipgloss rendering, formatting
+  Makefile
+  README.md
+```
+
 ## Install
 
 ```
-go install github.com/pscyk/x-digest@latest
+go install github.com/pscyk/x-digest/cmd/x-digest@latest
 ```
 
 Or build from source:
@@ -45,6 +58,10 @@ x-digest --timeline foryou
 # Specific user's tweets
 x-digest --user elonmusk
 x-digest --user @Polymarket --count 5
+
+# Search your bookmarks
+x-digest --bookmarks "claude code"
+x-digest --bookmarks all --count 10
 ```
 
 ### Flags
@@ -54,20 +71,13 @@ x-digest --user @Polymarket --count 5
 | `--count` | `20` | Number of top tweets to show |
 | `--timeline` | `following` | `following` or `foryou` |
 | `--user` | | Fetch tweets from a specific account |
+| `--bookmarks` | | Search bookmarks (keyword, or `all`) |
 | `--profile` | | Firefox profile name override |
 | `--query-id` | | Override GraphQL query ID (if default breaks) |
 
-## Debug build
-
-Build with runtime assertions enabled (panics on invariant violations):
-
-```
-make build-debug
-```
-
 ## About the bearer token
 
-The bearer token in `api.go` is X's **public** web-client token — identical for every user who visits x.com. It's embedded in their JavaScript bundle and is used by every open-source X scraper. It is not a secret.
+The bearer token in `client.go` is X's **public** web-client token — identical for every user who visits x.com. It's embedded in their JavaScript bundle and is used by every open-source X scraper. It is not a secret.
 
 ## Query ID rotation
 
@@ -75,13 +85,13 @@ X periodically rotates GraphQL query IDs when they deploy new client bundles. If
 
 1. Visit `view-source:https://x.com` and find the main JS bundle URL
 2. Search the bundle for `operationName:"HomeLatestTimeline"` to find the new query ID
-3. Pass it with `--query-id <new-id>`, or update the constants in `api.go`
+3. Pass it with `--query-id <new-id>`, or update the constants in `internal/twitter/client.go`
 
 ## Style
 
 This project follows [Go-Tiger-Style](https://github.com/Predixus/Go-Tiger-Style):
 
 - Explicit slice/map capacity allocation
-- Debug assertions via build tags (`assert_debug.go` / `assert_release.go`)
 - Table-driven tests + fuzz tests
 - Transparent error handling — no panics in release builds
+- `internal/` packages to prevent external import of internals
