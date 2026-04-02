@@ -1,0 +1,18 @@
+# Binary
+x-digest.exe
+x-digest
+
+# Test/bench artifacts
+bench.txt
+*.test
+*.prof
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store

@@ -10,15 +10,13 @@ import (
 )
 
 var (
-	// Colors
-	accent    = lipgloss.Color("#1DA1F2") // twitter blue
+	accent    = lipgloss.Color("#1DA1F2")
 	dimColor  = lipgloss.Color("#666666")
 	likeColor = lipgloss.Color("#F91880")
 	rtColor   = lipgloss.Color("#00BA7C")
 	viewColor = lipgloss.Color("#8899A6")
 	rankColor = lipgloss.Color("#FFD700")
 
-	// Styles
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(accent).
@@ -31,43 +29,22 @@ var (
 			MarginBottom(1).
 			Width(64)
 
-	rankStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(rankColor)
+	rankStyle     = lipgloss.NewStyle().Bold(true).Foreground(rankColor)
+	handleStyle   = lipgloss.NewStyle().Bold(true).Foreground(accent)
+	nameStyle     = lipgloss.NewStyle().Foreground(dimColor)
+	verifiedStyle = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	timeStyle     = lipgloss.NewStyle().Foreground(dimColor).Italic(true)
+	tweetStyle    = lipgloss.NewStyle().PaddingTop(1).PaddingBottom(1)
+	likeStyle     = lipgloss.NewStyle().Foreground(likeColor)
+	rtStyle       = lipgloss.NewStyle().Foreground(rtColor)
+	replyStyle    = lipgloss.NewStyle().Foreground(dimColor)
+	viewStyle     = lipgloss.NewStyle().Foreground(viewColor)
+	mediaStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#E0A458"))
+)
 
-	handleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(accent)
-
-	nameStyle = lipgloss.NewStyle().
-			Foreground(dimColor)
-
-	verifiedStyle = lipgloss.NewStyle().
-			Foreground(accent).
-			Bold(true)
-
-	timeStyle = lipgloss.NewStyle().
-			Foreground(dimColor).
-			Italic(true)
-
-	tweetStyle = lipgloss.NewStyle().
-			PaddingTop(1).
-			PaddingBottom(1)
-
-	likeStyle = lipgloss.NewStyle().
-			Foreground(likeColor)
-
-	rtStyle = lipgloss.NewStyle().
-			Foreground(rtColor)
-
-	replyStyle = lipgloss.NewStyle().
-			Foreground(dimColor)
-
-	viewStyle = lipgloss.NewStyle().
-			Foreground(viewColor)
-
-	mediaStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#E0A458"))
+const (
+	cardInnerWidth = 58
+	maxTextLines   = 5
 )
 
 func displayTweets(tweets []Tweet, count int) {
@@ -99,7 +76,6 @@ func displayTweets(tweets []Tweet, count int) {
 }
 
 func printTweet(rank int, t Tweet) {
-	// Top line: rank + handle + name + verified + time
 	verified := ""
 	if t.IsVerified {
 		verified = verifiedStyle.Render(" ✓")
@@ -111,30 +87,28 @@ func printTweet(rank int, t Tweet) {
 	r := rankStyle.Render(fmt.Sprintf("#%d", rank))
 
 	topLine := fmt.Sprintf("%s  %s%s%s", r, handle, name, verified)
-	// Pad to push time to the right
 	padLen := 60 - lipgloss.Width(topLine) - lipgloss.Width(ago)
 	if padLen < 1 {
 		padLen = 1
 	}
 	topLine += strings.Repeat(" ", padLen) + ago
 
-	// Tweet body
-	lines := wordWrap(t.Text, 58)
+	lines := wordWrap(t.Text, cardInnerWidth)
 	body := tweetStyle.Render(strings.Join(lines, "\n"))
 
-	// Stats line
 	stats := buildStats(t)
 
-	card := cardStyle.Render(topLine + "\n" + body + "\n" + stats)
-	fmt.Println(card)
+	fmt.Println(cardStyle.Render(topLine + "\n" + body + "\n" + stats))
 }
 
 func buildStats(t Tweet) string {
-	parts := []string{
+	// Pre-allocate: at most 5 stat parts (likes, RTs, replies, views, media).
+	parts := make([]string, 0, 5)
+	parts = append(parts,
 		likeStyle.Render(fmt.Sprintf("♥ %s", formatNumber(t.Likes))),
 		rtStyle.Render(fmt.Sprintf("↻ %s", formatNumber(t.Retweets))),
 		replyStyle.Render(fmt.Sprintf("💬 %s", formatNumber(t.Replies))),
-	}
+	)
 	if t.Views > 0 {
 		parts = append(parts, viewStyle.Render(fmt.Sprintf("👁 %s", formatNumber(t.Views))))
 	}
@@ -151,10 +125,14 @@ func buildStats(t Tweet) string {
 	return strings.Join(parts, "   ")
 }
 
+// wordWrap splits text into lines of at most width characters, capped at maxTextLines.
 func wordWrap(text string, width int) []string {
+	assert(width > 0, "wordWrap width must be positive")
+
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	paragraphs := strings.Split(text, "\n")
-	var lines []string
+	// Estimate: most tweets fit in 4-6 lines.
+	lines := make([]string, 0, 8)
 
 	for _, para := range paragraphs {
 		para = strings.TrimSpace(para)
@@ -177,9 +155,9 @@ func wordWrap(text string, width int) []string {
 		lines = append(lines, current)
 	}
 
-	if len(lines) > 5 {
-		lines = lines[:5]
-		lines[4] += "…"
+	if len(lines) > maxTextLines {
+		lines = lines[:maxTextLines]
+		lines[maxTextLines-1] += "…"
 	}
 	return lines
 }

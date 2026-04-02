@@ -12,6 +12,8 @@ import (
 )
 
 const (
+	// bearerToken is X's PUBLIC web-client bearer token, identical for every user.
+	// Embedded in x.com's JavaScript bundle — not a secret.
 	bearerToken = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 
 	homeTimelineQueryID       = "Y37d_0I85ytclAJzNXoUYA"
@@ -20,6 +22,10 @@ const (
 	userTweetsQueryID         = "ItymOSM-DiyKKK0lF2YWwA"
 
 	graphqlBaseURL = "https://x.com/i/api/graphql"
+
+	apiTimeout     = 30 * time.Second
+	maxBodyBytes   = 10 * 1024 * 1024 // 10 MB safety cap on response reads
+	featureCount   = 22               // number of feature flags, keep in sync with map below
 )
 
 var features = map[string]bool{
@@ -48,7 +54,16 @@ var features = map[string]bool{
 	"responsive_web_enhance_cards_enabled":                                    false,
 }
 
+func init() {
+	assert(len(features) == featureCount, "feature map count out of sync with featureCount const")
+}
+
+// fetchTimeline fetches the authenticated user's home timeline.
 func fetchTimeline(authToken, ct0, timelineType string, count int, queryIDOverride string) ([]Tweet, error) {
+	assert(authToken != "", "authToken must not be empty")
+	assert(ct0 != "", "ct0 must not be empty")
+	assert(count > 0, "count must be positive")
+
 	var queryID, endpoint string
 	switch timelineType {
 	case "foryou":
@@ -63,34 +78,27 @@ func fetchTimeline(authToken, ct0, timelineType string, count int, queryIDOverri
 	}
 
 	variables := map[string]any{
-		"count":                  count * 3,
+		"count":                  count * 3, // over-request; we filter + sort client-side
 		"includePromotedContent": true,
 		"latestControlAvailable": true,
 		"requestContext":         "launch",
 		"withCommunity":          true,
-		"seenTweetIds":           []string{},
+		"seenTweetIds":           make([]string, 0),
 	}
 
-	varsJSON, _ := json.Marshal(variables)
-	featJSON, _ := json.Marshal(features)
-
-	reqURL := fmt.Sprintf("%s/%s/%s", graphqlBaseURL, queryID, endpoint)
-	u, _ := url.Parse(reqURL)
-	q := u.Query()
-	q.Set("variables", string(varsJSON))
-	q.Set("features", string(featJSON))
-	u.RawQuery = q.Encode()
-
-	body, err := doAPIRequest(u.String(), authToken, ct0)
+	body, err := graphqlGET(queryID, endpoint, variables, authToken, ct0)
 	if err != nil {
 		return nil, err
 	}
 
-	return parseTweets(body)
+	return parseHomeTimeline(body)
 }
 
 // fetchUserTweets resolves a screen name and fetches their recent tweets.
 func fetchUserTweets(authToken, ct0, screenName string, count int) ([]Tweet, error) {
+	assert(screenName != "", "screenName must not be empty")
+	assert(count > 0, "count must be positive")
+
 	userID, err := resolveScreenName(authToken, ct0, screenName)
 	if err != nil {
 		return nil, err
@@ -105,17 +113,7 @@ func fetchUserTweets(authToken, ct0, screenName string, count int) ([]Tweet, err
 		"withV2Timeline":                         true,
 	}
 
-	varsJSON, _ := json.Marshal(variables)
-	featJSON, _ := json.Marshal(features)
-
-	reqURL := fmt.Sprintf("%s/%s/UserTweets", graphqlBaseURL, userTweetsQueryID)
-	u, _ := url.Parse(reqURL)
-	q := u.Query()
-	q.Set("variables", string(varsJSON))
-	q.Set("features", string(featJSON))
-	u.RawQuery = q.Encode()
-
-	body, err := doAPIRequest(u.String(), authToken, ct0)
+	body, err := graphqlGET(userTweetsQueryID, "UserTweets", variables, authToken, ct0)
 	if err != nil {
 		return nil, err
 	}
@@ -130,21 +128,11 @@ func fetchUserTweets(authToken, ct0, screenName string, count int) ([]Tweet, err
 
 func resolveScreenName(authToken, ct0, screenName string) (string, error) {
 	variables := map[string]any{
-		"screen_name":                screenName,
-		"withSafetyModeUserFields":   true,
+		"screen_name":              screenName,
+		"withSafetyModeUserFields": true,
 	}
 
-	varsJSON, _ := json.Marshal(variables)
-	featJSON, _ := json.Marshal(features)
-
-	reqURL := fmt.Sprintf("%s/%s/UserByScreenName", graphqlBaseURL, userByScreenNameQueryID)
-	u, _ := url.Parse(reqURL)
-	q := u.Query()
-	q.Set("variables", string(varsJSON))
-	q.Set("features", string(featJSON))
-	u.RawQuery = q.Encode()
-
-	body, err := doAPIRequest(u.String(), authToken, ct0)
+	body, err := graphqlGET(userByScreenNameQueryID, "UserByScreenName", variables, authToken, ct0)
 	if err != nil {
 		return "", fmt.Errorf("looking up @%s: %w", screenName, err)
 	}
@@ -161,9 +149,33 @@ func resolveScreenName(authToken, ct0, screenName string) (string, error) {
 	return uid, nil
 }
 
-// doAPIRequest handles the common HTTP request logic.
-func doAPIRequest(url, authToken, ct0 string) ([]byte, error) {
-	req, err := http.NewRequest("GET", url, nil)
+// --- HTTP layer ---
+
+// graphqlGET builds and executes a GET request to X's GraphQL API.
+func graphqlGET(queryID, endpoint string, variables map[string]any, authToken, ct0 string) ([]byte, error) {
+	varsJSON, err := json.Marshal(variables)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling variables: %w", err)
+	}
+	featJSON, err := json.Marshal(features)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling features: %w", err)
+	}
+
+	u, err := url.Parse(fmt.Sprintf("%s/%s/%s", graphqlBaseURL, queryID, endpoint))
+	if err != nil {
+		return nil, fmt.Errorf("parsing URL: %w", err)
+	}
+	q := u.Query()
+	q.Set("variables", string(varsJSON))
+	q.Set("features", string(featJSON))
+	u.RawQuery = q.Encode()
+
+	return doAPIRequest(u.String(), authToken, ct0)
+}
+
+func doAPIRequest(reqURL, authToken, ct0 string) ([]byte, error) {
+	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
@@ -177,14 +189,14 @@ func doAPIRequest(url, authToken, ct0 string) ([]byte, error) {
 	req.Header.Set("Referer", "https://x.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: apiTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("API request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
@@ -201,17 +213,19 @@ func doAPIRequest(url, authToken, ct0 string) ([]byte, error) {
 	}
 }
 
-func parseTweets(body []byte) ([]Tweet, error) {
+// --- JSON parsing ---
+
+func parseHomeTimeline(body []byte) ([]Tweet, error) {
 	var resp TimelineResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parsing response JSON: %w", err)
 	}
-
 	return parseInstructions(resp.Data.Home.HomeTimelineUrt.Instructions)
 }
 
 func parseInstructions(instructions []json.RawMessage) ([]Tweet, error) {
-	var tweets []Tweet
+	// Pre-allocate with estimated capacity: ~50 entries per timeline fetch.
+	tweets := make([]Tweet, 0, 50)
 
 	for _, rawInstr := range instructions {
 		var instr Instruction
@@ -228,12 +242,10 @@ func parseInstructions(instructions []json.RawMessage) ([]Tweet, error) {
 		}
 
 		for _, entry := range addEntries.Entries {
-			// Skip cursors
 			if strings.HasPrefix(entry.EntryID, "cursor-") {
 				continue
 			}
 
-			// Try as single tweet item
 			if strings.HasPrefix(entry.EntryID, "tweet-") {
 				if t, ok := extractTweetFromItem(entry.Content); ok {
 					tweets = append(tweets, t)
@@ -241,7 +253,6 @@ func parseInstructions(instructions []json.RawMessage) ([]Tweet, error) {
 				continue
 			}
 
-			// Try as conversation module
 			if strings.HasPrefix(entry.EntryID, "conversationthread-") || strings.HasPrefix(entry.EntryID, "profile-conversation-") {
 				var mod TimelineModuleContent
 				if err := json.Unmarshal(entry.Content, &mod); err == nil && mod.Items != nil {
@@ -254,7 +265,7 @@ func parseInstructions(instructions []json.RawMessage) ([]Tweet, error) {
 				continue
 			}
 
-			// Generic: try to extract a tweet from any entry
+			// Fallback: try extracting a tweet from any unknown entry type.
 			if t, ok := extractTweetFromItem(entry.Content); ok {
 				tweets = append(tweets, t)
 			}
@@ -285,7 +296,7 @@ func extractFromTweetContent(tc TweetContent) (Tweet, bool) {
 		return Tweet{}, false
 	}
 
-	// Handle TweetWithVisibilityResults — the actual tweet is nested under .tweet
+	// TweetWithVisibilityResults wraps the real tweet one level deeper.
 	if result.Typename == "TweetWithVisibilityResults" && result.Tweet != nil {
 		if err := json.Unmarshal(result.Tweet, &result); err != nil {
 			return Tweet{}, false
@@ -302,7 +313,6 @@ func extractFromTweetContent(tc TweetContent) (Tweet, bool) {
 	}
 
 	views, _ := strconv.Atoi(result.Views.Count)
-
 	ts, _ := time.Parse("Mon Jan 02 15:04:05 -0700 2006", legacy.CreatedAt)
 
 	mediaType := ""
@@ -316,7 +326,7 @@ func extractFromTweetContent(tc TweetContent) (Tweet, bool) {
 		mediaType = mediaList[0].Type
 	}
 
-	// User info can be in legacy or core depending on the endpoint
+	// User info lives in .legacy on home timeline, .core on user timeline.
 	authorName := result.Core.UserResults.Result.Legacy.Name
 	authorHandle := result.Core.UserResults.Result.Legacy.ScreenName
 	if authorName == "" {
@@ -326,7 +336,7 @@ func extractFromTweetContent(tc TweetContent) (Tweet, bool) {
 		authorHandle = result.Core.UserResults.Result.UserCore.ScreenName
 	}
 
-	t := Tweet{
+	return Tweet{
 		ID:           legacy.IDStr,
 		Text:         legacy.FullText,
 		AuthorName:   authorName,
@@ -341,8 +351,7 @@ func extractFromTweetContent(tc TweetContent) (Tweet, bool) {
 		MediaType:    mediaType,
 		IsVerified:   result.Core.UserResults.Result.IsBlueVerified,
 		Engagement:   legacy.FavoriteCount + legacy.RetweetCount,
-	}
-	return t, true
+	}, true
 }
 
 func truncate(s string, n int) string {

@@ -12,6 +12,19 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const (
+	cookieQuery = `
+		SELECT name, value FROM moz_cookies
+		WHERE (host = '.x.com' OR host = '.twitter.com')
+		  AND name IN ('auth_token', 'ct0')
+		  AND originAttributes = ''
+	`
+	// WAL files needed for consistent reads while Firefox is running.
+	dbFile  = "cookies.sqlite"
+	walFile = "cookies.sqlite-wal"
+	shmFile = "cookies.sqlite-shm"
+)
+
 // extractCookies reads auth_token and ct0 from Firefox's cookie store.
 func extractCookies(profileOverride string) (authToken, ct0 string, err error) {
 	profileDir, err := findFirefoxProfile(profileOverride)
@@ -19,39 +32,33 @@ func extractCookies(profileOverride string) (authToken, ct0 string, err error) {
 		return "", "", err
 	}
 
-	dbPath := filepath.Join(profileDir, "cookies.sqlite")
+	dbPath := filepath.Join(profileDir, dbFile)
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return "", "", fmt.Errorf("cookies.sqlite not found at %s — are you logged into X in Firefox?", dbPath)
 	}
 
-	// Copy DB + WAL files to temp dir (Firefox locks the DB while running)
+	// Copy DB + WAL files to temp dir (Firefox holds a WAL lock while running).
 	tmpDir, err := os.MkdirTemp("", "x-digest-")
 	if err != nil {
 		return "", "", fmt.Errorf("creating temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	for _, name := range []string{"cookies.sqlite", "cookies.sqlite-wal", "cookies.sqlite-shm"} {
+	for _, name := range []string{dbFile, walFile, shmFile} {
 		src := filepath.Join(profileDir, name)
 		dst := filepath.Join(tmpDir, name)
-		if err := copyFile(src, dst); err != nil && name == "cookies.sqlite" {
-			return "", "", fmt.Errorf("copying %s: %w", name, err)
+		if cpErr := copyFile(src, dst); cpErr != nil && name == dbFile {
+			return "", "", fmt.Errorf("copying %s: %w", name, cpErr)
 		}
 	}
 
-	tmpDB := filepath.Join(tmpDir, "cookies.sqlite")
-	db, err := sql.Open("sqlite", tmpDB+"?mode=ro")
+	db, err := sql.Open("sqlite", filepath.Join(tmpDir, dbFile)+"?mode=ro")
 	if err != nil {
 		return "", "", fmt.Errorf("opening cookie db: %w", err)
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`
-		SELECT name, value FROM moz_cookies
-		WHERE (host = '.x.com' OR host = '.twitter.com')
-		  AND name IN ('auth_token', 'ct0')
-		  AND originAttributes = ''
-	`)
+	rows, err := db.Query(cookieQuery)
 	if err != nil {
 		return "", "", fmt.Errorf("querying cookies: %w", err)
 	}
@@ -69,6 +76,9 @@ func extractCookies(profileOverride string) (authToken, ct0 string, err error) {
 			ct0 = value
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return "", "", fmt.Errorf("iterating cookie rows: %w", err)
+	}
 
 	if authToken == "" {
 		return "", "", fmt.Errorf("auth_token cookie not found — log into x.com in Firefox first")
@@ -76,6 +86,9 @@ func extractCookies(profileOverride string) (authToken, ct0 string, err error) {
 	if ct0 == "" {
 		return "", "", fmt.Errorf("ct0 cookie not found — log into x.com in Firefox first")
 	}
+
+	assert(len(authToken) > 0, "authToken validated but empty")
+	assert(len(ct0) > 0, "ct0 validated but empty")
 
 	return authToken, ct0, nil
 }
@@ -96,24 +109,21 @@ func findFirefoxProfile(override string) (string, error) {
 		return "", fmt.Errorf("profile %q not found in %s", override, filepath.Join(firefoxDir, "Profiles"))
 	}
 
-	// Parse profiles.ini to find the default profile
+	// Parse profiles.ini to find the active profile.
 	iniPath := filepath.Join(firefoxDir, "profiles.ini")
-	profilePath, err := parseProfilesINI(iniPath)
-	if err == nil && profilePath != "" {
+	if profilePath, err := parseProfilesINI(iniPath); err == nil && profilePath != "" {
 		if filepath.IsAbs(profilePath) {
 			return profilePath, nil
 		}
 		return filepath.Join(firefoxDir, profilePath), nil
 	}
 
-	// Fallback: glob for *.default-release
-	matches, _ := filepath.Glob(filepath.Join(firefoxDir, "Profiles", "*.default-release"))
-	if len(matches) > 0 {
-		return matches[0], nil
-	}
-	matches, _ = filepath.Glob(filepath.Join(firefoxDir, "Profiles", "*.default"))
-	if len(matches) > 0 {
-		return matches[0], nil
+	// Fallback: glob for common default profile names.
+	for _, pattern := range []string{"*.default-release", "*.default"} {
+		matches, _ := filepath.Glob(filepath.Join(firefoxDir, "Profiles", pattern))
+		if len(matches) > 0 {
+			return matches[0], nil
+		}
 	}
 
 	return "", fmt.Errorf("no Firefox profile found in %s", firefoxDir)
