@@ -58,12 +58,15 @@ type Client struct {
 	http      *http.Client
 }
 
-// NewClient creates a Client from Firefox cookies.
+// NewClient creates a Client from the selected browser's cookies.
 func NewClient(authToken, ct0 string) *Client {
 	return &Client{
 		authToken: authToken,
 		ct0:       ct0,
-		http:      &http.Client{Timeout: apiTimeout},
+		http: &http.Client{Timeout: apiTimeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			// Never forward session headers to a redirect target.
+			return http.ErrUseLastResponse
+		}},
 	}
 }
 
@@ -112,9 +115,9 @@ func (c *Client) FetchUserTweets(screenName string, count int) ([]Tweet, error) 
 	}
 
 	variables := map[string]any{
-		"userId":                 userID,
-		"count":                  count * 2,
-		"includePromotedContent": true,
+		"userId":                                 userID,
+		"count":                                  count * 2,
+		"includePromotedContent":                 true,
 		"withQuickPromoteEligibilityTweetFields": true,
 		"withVoice":                              true,
 		"withV2Timeline":                         true,
@@ -249,7 +252,7 @@ func (c *Client) doRequest(reqURL string) ([]byte, error) {
 	case 200:
 		return body, nil
 	case 401, 403:
-		return nil, fmt.Errorf("authentication failed (HTTP %d) — your X session may have expired, log into x.com in Firefox and retry", resp.StatusCode)
+		return nil, fmt.Errorf("authentication failed (HTTP %d) — your X session may have expired, log into x.com in the selected browser and retry", resp.StatusCode)
 	case 429:
 		return nil, fmt.Errorf("rate limited (HTTP 429) — wait a few minutes and try again")
 	default:

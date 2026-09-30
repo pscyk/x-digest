@@ -2,6 +2,8 @@ package display
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -48,8 +50,13 @@ const cardInnerWidth = 58
 
 // Tweets sorts by engagement and prints the top count tweets.
 func Tweets(tweets []twitter.Tweet, count int) {
+	TweetsTo(os.Stdout, tweets, count)
+}
+
+// TweetsTo sorts by engagement and renders highlights to w.
+func TweetsTo(w io.Writer, tweets []twitter.Tweet, count int) {
 	if len(tweets) == 0 {
-		fmt.Println(lipgloss.NewStyle().Foreground(dimColor).Render("No tweets found."))
+		fmt.Fprintln(w, lipgloss.NewStyle().Foreground(dimColor).Render("No tweets found."))
 		return
 	}
 
@@ -65,17 +72,17 @@ func Tweets(tweets []twitter.Tweet, count int) {
 	title := headerStyle.Render(fmt.Sprintf("  X Feed Highlights  %s", time.Now().Format("Jan 2, 2006")))
 	subtitle := lipgloss.NewStyle().Foreground(dimColor).Render(
 		fmt.Sprintf("  Top %d by engagement", count))
-	fmt.Println()
-	fmt.Println(title)
-	fmt.Println(subtitle)
-	fmt.Println()
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, title)
+	fmt.Fprintln(w, subtitle)
+	fmt.Fprintln(w)
 
 	for i, t := range tweets {
-		printTweet(i+1, t)
+		printTweet(w, i+1, t)
 	}
 }
 
-func printTweet(rank int, t twitter.Tweet) {
+func printTweet(w io.Writer, rank int, t twitter.Tweet) {
 	verified := ""
 	if t.IsVerified {
 		verified = verifiedStyle.Render(" ✓")
@@ -98,7 +105,7 @@ func printTweet(rank int, t twitter.Tweet) {
 
 	stats := buildStats(t)
 
-	fmt.Println(cardStyle.Render(topLine + "\n" + body + "\n" + stats))
+	fmt.Fprintln(w, cardStyle.Render(topLine+"\n"+body+"\n"+stats))
 }
 
 func buildStats(t twitter.Tweet) string {
